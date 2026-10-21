@@ -93,11 +93,31 @@ root_task_id: t_a8f34caa
 | L1 全量 | `scripts/go-docker.sh qoderwork test ./... -count=1` | 0 | `ok github.com/Sliverkiss/cpa-plugin/qoderwork 0.013s` | PASS |
 | L1 vet | `scripts/go-docker.sh <plugin> vet ./...` | 0 | 无输出 | PASS |
 | L1 race | `scripts/go-docker.sh <plugin> test -race ./... -count=1` | 0 | workbuddy `ok ... 6.380s`；qoderwork `ok ... 1.041s` | PASS |
-| A8-01…A8-05 | CI `Build` workflow on PR #1（`test` / `build` / `build-cross`） | 见 CI run | 见 PR checks | 待 CI 收口（权威层） |
+| A8-01…A8-05 | CI `Build` workflow on PR #1（run `39536628694`，重跑后） | 见 §2.1 | 14 success / 2 failure / 1 skipped | **2 个 freebsd-amd64 交叉编译 job 红**，原因见 §5（外部 action 死链，与本次改动无关） |
 | AC-2c / AC-3 / AC-4 运行时 / AC-5 / AC-8 运行时 / VC-1…VC-4 | 需宿主 v7.3.5 | — | — | **BLOCKED(P-HOST)** |
 | AC-6（A5-01…A5-07） | 需两新仓 + 商店登记 | — | — | **BLOCKED(P-REPO / P-STORE)** |
 
 断言总数：L0 5 项、L1 44 条命名断言、L2 6 条、L3 4 条 —— 除 L4/L5 外全部 PASS。
+
+### 2.1 本轮（dev-director 复验）独立重跑的证据
+
+上一轮 trace 的 CI 行只写「待 CI 收口」，**未核对实际结论**；本轮由 dev-director 亲自复跑并抓取 CI 结论，口径如下（全部为本机实跑，非引用）：
+
+- 本地 Go 通道：`scripts/go-docker.sh` → `go version go1.26.10 linux/arm64`（`golang:1.26` 镜像）
+- `scripts/go-docker.sh workbuddy test ./... -count=1` → exit 0，`ok github.com/sliverkiss/workbuddy-plus 4.953s`，`--- PASS` 355 行
+- `scripts/go-docker.sh qoderwork test ./... -count=1` → exit 0，`ok github.com/Sliverkiss/cpa-plugin/qoderwork 0.011s`，`--- PASS` 48 行
+- `scripts/go-docker.sh {workbuddy,qoderwork} vet ./...` → 两者 exit 0，无输出
+- `scripts/go-docker.sh {workbuddy,qoderwork} test -race ./... -count=1` → workbuddy `ok 6.343s`、qoderwork `ok 1.043s`，均 exit 0
+- `python3 scripts/validate-registry.py registry.json` → exit 0，`OK registry.json: 2 plugin(s), schema_version=1`
+- `python3 scripts/check-version-single-source.py` → exit 0，`OK version single-source: qoderwork=0.4.1, workbuddy=0.9.3 (...)`
+- `cd workbuddy && node --test panel.test.js` → `tests 25 / pass 25 / fail 0`
+- `grep -rn 'no stopCheckinScheduler' workbuddy qoderwork` → 零命中（exit 1）
+- 红线 5：`cliproxyPluginShutdown` 两侧均为注释化 no-op；红线 6：`ResetQuota` 两侧均 `Success: false`
+- 契约对称性：两侧 `main.go` 的 `MethodQuota{Identifier,Describe,Fetch,Reset}` / `MethodRequestComplete` / `MethodPluginQuiesce` 六个 case 与 `quota_provider` / `request_lifecycle_plugin` 两个 capability 字段一一对应
+- 凭据扫描：`git diff main...HEAD` 全部改动文件对 `sk-` / `ghp_` / `AKIA` / `PRIVATE KEY` / `Bearer <token>` 零命中；无 `config.yaml*` / `.env*` / `auths/` / `*.pem` 入库
+
+**qoderwork 无 `panel.test.js`** 属 TEST_PLAN A3-01 的既定条件口径（「仅当 `panel.test.js` 存在时触发」），不构成缺口；其面板侧 A1-44 静态断言（`TestPanelHasNoAffinityWritePath`）已存在并通过。
+
 
 ---
 
@@ -107,7 +127,7 @@ root_task_id: t_a8f34caa
 |---|---|---|
 | P0 WIP 对账 | 完成 | §1 映射表；两处 golden 断言强度缺口已补（A2-02 / A2-06）；qoderwork P3 已从零补齐 |
 | P1 版本治理 | 完成 | A0-2 退出 0；A1-50…A1-52 全绿 |
-| P2 SDK 升级 | 完成 | A0-3 输出为空；CI 编译为权威 |
+| P2 SDK 升级 | 完成（CI 通道 1 项外部阻塞） | A0-3 输出为空；CI 14 success / 2 failure / 1 skipped —— 2 项 failure 为 freebsd-amd64 交叉编译的外部 action 死链，见 §5 |
 | P3 能力补齐 | 完成 | A1-10…A1-44 全绿；A1-39 零命中 |
 | P4 拆仓与发布单元 | **BLOCKED(P-REPO)** | `fanchcho/workbuddy-cpa-plugin` / `fanchcho/qoderwork-cpa-plugin` 在 GitHub 侧不存在；按卡内约束不得自行改造现有单仓结构 |
 | P5 发布端到端 | **BLOCKED(P-REPO / P-STORE)** | 依赖 P4 产物 + 管理端 store source 登记 |
@@ -126,3 +146,46 @@ root_task_id: t_a8f34caa
 | R9 | 宿主版本漂移被代跑 | 本机宿主 8.0.35，未用于任何验收取证 |
 | R10 | 未提交 WIP 被误当已验证 | 已按 §1 逐文件对账，语义不足处已改/补 |
 | — | ADR-001 残余差异（`FetchQuota` 不使用 per-auth 代理） | 设计已知差异，本轮不承诺出口 IP 一致性 |
+
+---
+
+## 5. CI 外部阻塞项：freebsd-amd64 交叉编译（P-CI，需决策）
+
+### 5.1 现象
+
+CI run `39536628694`（PR #1，`feat/cpa-7.3.5`，重跑后）job 结论：
+
+- `success` 14：`Test (workbuddy)`、`Test (qoderwork)`、两插件 × {linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64} 共 10 个原生构建、两插件 `windows-arm64 (go-cross)`
+- `failure` 2：`workbuddy freebsd-amd64 (go-cross)`、`qoderwork freebsd-amd64 (go-cross)`
+- `skipped` 1：`Release`（非 tag 触发，符合预期）
+
+两个 failure 的报错完全一致，且发生在编译**之前**：
+
+```
+##[error]Command failed with exit code 8: wget -q https://download.freebsd.org/releases/amd64/14.3-RELEASE/base.txz
+```
+
+### 5.2 根因（已实证）
+
+1. `https://download.freebsd.org/releases/amd64/14.3-RELEASE/base.txz` 现返回 **HTTP 404**；`/releases/amd64/14.3-RELEASE/` 目录同样 404。现存版本为 `14.4 / 14.5 / 15.0 / 15.1`。
+2. 该 URL 由 `go-cross/cgo-actions@v1` 内部**硬编码**（其 `dist/index.js`：`wget -q https://download.freebsd.org/releases/${os_arch}/14.3-RELEASE/base.txz`），`action.yml` **没有任何输入可以覆盖** FreeBSD 版本或镜像地址；仓库仅 `v1.0.0 / v1.0.1 / v1.1.0` 三个 tag，默认分支同样是 14.3。
+3. 14.3 的原始比特在所有可达镜像上均已下架（`ftp.freebsd.org` 301→404、清华镜像 404），因此**无法取得与既有产物同源的 sysroot**。
+4. 该 failure 与本次改动**无关**：freebsd-amd64 目标在 `main` 的 `build.yml` 中即已存在（本轮未增删目标）；失败点在 sysroot 下载，尚未进入任何本项目代码的编译；两个插件表现完全相同。
+
+### 5.3 为什么本轮不自行修复
+
+可选修法都要改动发布产物的构建基线，属于需要拍板的决定，超出 dev 阶段可自行推断的范围：
+
+| 方案 | 影响 | 为何未执行 |
+|---|---|---|
+| 把 sysroot 从 14.3 提到 14.4/14.5 | 抬高 freebsd 产物的最低运行版本（ABI 下限） | 改变发布产物兼容性，需批准 |
+| 从交叉矩阵移除 freebsd-amd64 | 产物从 7 个 zip 降到 5 个 | 直接违反 DESIGN §8「7 zip + checksums.txt 不变」与 D5 |
+| 用 `wget` shim 重写到 14.4 | 同第一行（仍是 14.4 sysroot） | 只是把同样的兼容性变更藏进 CI 脚本，不解决决策问题 |
+
+**请求决策（P-CI）**：freebsd-amd64 采用 (a) 升 sysroot 至 14.4 并接受 ABI 下限抬高、(b) 从发布矩阵移除该目标（需同步改 DESIGN §8 的 7-zip 契约）、还是 (c) 暂时接受该 leg 红并继续推进 L1/L2/L3 与 L4 验收。
+
+### 5.4 对验收的影响
+
+- 不受影响：AC-1 的 L0/L1/L3 部分（`Test` job 两插件全绿）、AC-2、AC-4 的 L1 部分、AC-5 的 L1 部分、AC-7、AC-8 的 L1 部分。
+- 受影响：AC-1 的 L8（多平台产物）目前**不完整** —— 5 个原生平台 + windows-arm64 交叉已产出，freebsd-amd64 缺失。
+
