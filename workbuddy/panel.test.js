@@ -456,3 +456,85 @@ test("partial import all failure keeps modal open and sanitizes long names", asy
   assert.equal(modal.classList.contains("show"), true);
   assert.equal(toastDetail, "0 成功 / 1 失败 · " + "x".repeat(120) + "：导入失败");
 });
+
+// --- session affinity (read-only, DESIGN §7 / VC-3) -------------------------
+const affinityLocation = {
+  href: "http://localhost/panel?session_id=sess-1&model=m1",
+  search: "?session_id=sess-1&model=m1",
+  pathname: "/panel",
+  hash: "",
+  host: "localhost",
+};
+
+// Flush the promise chain of one loadAffinity() call.
+async function settle() {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
+
+test("affinity hint is skipped entirely without a session identity", () => {
+  const { context } = loadPanel();
+  let calls = 0;
+  context.api = async () => { calls += 1; return {}; };
+  context.loadAffinity([{ auth_index: "1" }]);
+  assert.equal(calls, 0, "no session identity must not produce a host call");
+});
+
+test("affinity hint is skipped when there are no accounts", () => {
+  const { context } = loadPanel({ location: affinityLocation });
+  let calls = 0;
+  context.api = async () => { calls += 1; return {}; };
+  context.loadAffinity([]);
+  assert.equal(calls, 0);
+});
+
+test("affinity lookup failure degrades silently", async () => {
+  const { context, elements } = loadPanel({ location: affinityLocation });
+  context.api = async () => { throw new Error("host does not support affinity"); };
+  context.loadAffinity([{ auth_index: "2" }]);
+  await settle();
+  assert.equal(context.affinityBadgeFor({ auth_index: "2" }), "");
+  assert.equal(elements.get("affinityNote").hidden, true);
+  assert.equal(elements.get("affinityNote").textContent, "");
+});
+
+test("affinity unsupported status renders nothing", async () => {
+  const { context, elements } = loadPanel({ location: affinityLocation });
+  context.api = async () => ({ supported: false, status: "unknown" });
+  context.loadAffinity([{ auth_index: "2" }]);
+  await settle();
+  assert.equal(context.affinityBadgeFor({ auth_index: "2" }), "");
+  assert.equal(elements.get("affinityNote").hidden, true);
+});
+
+test("affinity bound state marks only the matching card", async () => {
+  const { context, elements } = loadPanel({ location: affinityLocation });
+  const seen = [];
+  context.api = async (path) => {
+    seen.push(path);
+    return { supported: true, status: "bound", auth_index: "2" };
+  };
+  context.loadAffinity([{ auth_index: "2" }, { auth_index: "3" }]);
+  await settle();
+  assert.match(seen[0], /^\/affinity\?session_id=sess-1&model=m1$/);
+  assert.match(context.affinityBadgeFor({ auth_index: "2" }), /会话绑定/);
+  assert.equal(context.affinityBadgeFor({ auth_index: "3" }), "");
+  assert.equal(elements.get("affinityNote").hidden, true);
+});
+
+test("affinity unbound state is a passive note, not an error", async () => {
+  const { context, elements } = loadPanel({ location: affinityLocation });
+  context.api = async () => ({ supported: true, status: "unbound" });
+  context.loadAffinity([{ auth_index: "2" }]);
+  await settle();
+  const note = elements.get("affinityNote");
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, "当前会话未绑定账号");
+  assert.equal(context.affinityBadgeFor({ auth_index: "2" }), "");
+});
+
+test("panel has no affinity write path", () => {
+  const html = fs.readFileSync(path.join(__dirname, "panel.html"), "utf8");
+  // The only affinity traffic is the read-only GET in loadAffinity().
+  assert.doesNotMatch(html, /\/affinity[^`]*method\s*:/);
+  assert.doesNotMatch(html, /affinity[^\n;]*(POST|PUT|PATCH|DELETE)/i);
+});

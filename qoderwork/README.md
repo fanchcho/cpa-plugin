@@ -20,8 +20,8 @@
 ### 从 Release（推荐）
 
 ```bash
-# 按你的平台下载（示例 linux/arm64）
-unzip qoderwork_0.2.6_linux_arm64.zip
+# 按你的平台下载（示例 linux/arm64；<version> = VERSION 文件内容，即 release tag 去掉前导 v）
+unzip qoderwork_<version>_linux_arm64.zip
 cp qoderwork.so /path/to/cliproxyapi/plugins/qoderwork.so
 ```
 
@@ -29,7 +29,8 @@ cp qoderwork.so /path/to/cliproxyapi/plugins/qoderwork.so
 
 ```bash
 cd qoderwork
-CGO_ENABLED=1 go build -buildmode=c-shared -ldflags "-X main.version=0.2.6" -o qoderwork.so .
+CGO_ENABLED=1 go build -buildmode=c-shared \
+  -ldflags "-X main.version=$(tr -d ' \n\r' < VERSION)" -o qoderwork.so .
 cp qoderwork.so /path/to/cliproxyapi/plugins/
 ```
 

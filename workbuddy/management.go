@@ -178,6 +178,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/select", Description: "Select the active account card used for chat routing (body: {auth_index})."},
 			{Method: http.MethodPost, Path: base + "/keepalive", Description: "Manually refresh access tokens for all accounts (or one with auth_index)."},
 			{Method: http.MethodGet, Path: base + "/keepalive/status", Description: "Last keepalive run summary + config."},
+			{Method: http.MethodGet, Path: base + "/affinity", Description: "Read-only: which credential the host has pinned to a session (query: session_id, model)."},
 		},
 		Resources: []resourceRoute{
 			{Path: "/panel", Menu: "WorkBuddy", Description: "WorkBuddy dashboard: credits, check-in, plan, import."},
@@ -191,6 +192,17 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return nil, err
 	}
 	path := strings.TrimRight(req.Path, "/")
+
+	// Hot-reload in flight: refuse new work with a retryable 503 instead of
+	// serving from an instance the host has already decided to replace
+	// (DESIGN §6.4). Read-only panel resources stay reachable so the UI can
+	// show the draining state; the host serves the new instance's panel anyway.
+	if pluginDraining() && !strings.HasPrefix(path, loadedResourceBasePath()) {
+		return okEnvelope(mgmtJSONResponse(http.StatusServiceUnavailable, map[string]any{
+			"error":     "plugin is draining after hot-reload",
+			"retryable": true,
+		}))
+	}
 
 	// Browser UI resource routes (unauthenticated).
 	resPrefix := loadedResourceBasePath()
@@ -252,6 +264,9 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleKeepaliveNowWithCallback(req.ManagementRequest, req.HostCallbackID)))
 	case req.Method == http.MethodGet && path == base+"/keepalive/status":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleKeepaliveStatus()))
+	case req.Method == http.MethodGet && path == base+"/affinity":
+		// Read-only observation, always HTTP 200 (see affinity.go).
+		return okEnvelope(mgmtJSONResponse(affinityProbeStatus, handleAffinityQuery(req.ManagementRequest)))
 	}
 	return okEnvelope(mgmtJSONResponse(http.StatusNotFound, map[string]any{"error": "not found: " + path}))
 }
