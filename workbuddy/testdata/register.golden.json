@@ -1,0 +1,112 @@
+{
+  "capabilities": {
+    "auth_provider": true,
+    "executor": true,
+    "executor_input_formats": [
+      "chat-completions"
+    ],
+    "executor_model_scope": "oauth",
+    "executor_output_formats": [
+      "chat-completions"
+    ],
+    "frontend_auth_provider": false,
+    "management_api": true,
+    "model_provider": true,
+    "scheduler": true,
+    "usage_plugin": true
+  },
+  "metadata": {
+    "Author": "Sliverkiss (based on workbuddy by lovingfish)",
+    "ConfigFields": [
+      {
+        "Description": "Enable daily auto check-in at 09:00 and 21:00 local time for CN accounts (default true).",
+        "EnumValues": null,
+        "Name": "checkin_auto",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Auto disable CN / delete Global when credits exhausted; re-enable CN after check-in restores credits (default true).",
+        "EnumValues": null,
+        "Name": "lifecycle_auto",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Enable daily access-token refresh at 22:00 local time to prevent Keycloak offline-session expiry (default true).",
+        "EnumValues": null,
+        "Name": "token_keepalive",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Insert U+200B into configured blocked terms in system/developer prompt text and tool title/description fields (default false).",
+        "EnumValues": null,
+        "Name": "desensitize",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Editable literal term list for desensitize; missing uses the built-in 85 terms and [] means an empty custom list.",
+        "EnumValues": null,
+        "Name": "desensitize_terms",
+        "Type": "array"
+      },
+      {
+        "Description": "Optional model IDs, single-line strings only. A non-empty list is the complete catalog and bypasses WorkBuddy catalog HTTP and cache; models.dev metadata fetch and cache still apply. Missing, null, or [] keeps dynamic WorkBuddy discovery.",
+        "EnumValues": null,
+        "Name": "models",
+        "Type": "array"
+      },
+      {
+        "Description": "OAuth request profile: cli (default) or explicit WorkBuddy desktop profile.",
+        "EnumValues": [
+          "cli",
+          "workbuddy"
+        ],
+        "Name": "oauth_client_mode",
+        "Type": "enum"
+      },
+      {
+        "Description": "Probe strict CN enterprise credits before personal resource packages (default false; Global unchanged).",
+        "EnumValues": null,
+        "Name": "enterprise_credits",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Optional Bearer key enforced by WorkBuddy for mutating management endpoints; also env WB_MANAGEMENT_KEY.",
+        "EnumValues": null,
+        "Name": "management_key",
+        "Type": "string"
+      },
+      {
+        "Description": "Optional plugin-level proxy for all WorkBuddy HTTP traffic. Supports http, https, socks5, and socks5h; empty preserves existing routing and host-bridged calls inherit CPA. Invalid settings fail closed. Explicit proxy traffic bypasses CPA request-log.",
+        "EnumValues": null,
+        "Name": "proxy-url",
+        "Type": "string"
+      },
+      {
+        "Description": "Multi-account selection: off (defer to built-in, default) or credits (pick the panel-selected account, with non-exhausted fallback). WARNING: when off + lifecycle_auto=false, exhausted accounts may still be routed — enable lifecycle_auto or set scheduler_mode=credits.",
+        "EnumValues": [
+          "off",
+          "credits"
+        ],
+        "Name": "scheduler_mode",
+        "Type": "enum"
+      },
+      {
+        "Description": "Optional override of CPAMP usage import URL (default http://cpa-manager-plus:18317/v0/management/usage/import; also env USAGE_REPORT_URL).",
+        "EnumValues": null,
+        "Name": "usage_report_url",
+        "Type": "string"
+      },
+      {
+        "Description": "Optional CPAMP admin key override. Prefer auto-detect from env CPAMP_ADMIN_KEY / USAGE_REPORT_KEY or secret file /run/secrets/cpamp_admin_key.",
+        "EnumValues": null,
+        "Name": "usage_report_key",
+        "Type": "string"
+      }
+    ],
+    "GitHubRepository": "https://github.com/Sliverkiss/cpa-plugin",
+    "Logo": "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png",
+    "Name": "workbuddy",
+    "Version": "0.9.3"
+  },
+  "schema_version": 1
+}

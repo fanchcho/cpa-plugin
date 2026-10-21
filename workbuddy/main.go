@@ -123,20 +123,55 @@ var (
 // login states (user started a login but never finished).
 const loginStatesPruneInterval = time.Minute
 
+var (
+	loginStatesJanitorStop chan struct{}
+	loginStatesJanitorMu   sync.Mutex
+)
+
 func init() {
+	startLoginStatesJanitor()
+}
+
+// startLoginStatesJanitor launches the abandoned-login sweeper. It exits when
+// stopLoginStatesJanitor closes the stop channel (plugin.quiesce path).
+func startLoginStatesJanitor() {
+	loginStatesJanitorMu.Lock()
+	defer loginStatesJanitorMu.Unlock()
+	if loginStatesJanitorStop != nil {
+		return // already running
+	}
+	stop := make(chan struct{})
+	loginStatesJanitorStop = stop
 	go func() {
 		ticker := time.NewTicker(loginStatesPruneInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			now := time.Now()
-			loginStates.Range(func(key, value any) bool {
-				if lc, ok := value.(*loginCtx); ok && now.After(lc.expires) {
-					loginStates.Delete(key)
-				}
-				return true
-			})
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				now := time.Now()
+				loginStates.Range(func(key, value any) bool {
+					if lc, ok := value.(*loginCtx); ok && now.After(lc.expires) {
+						loginStates.Delete(key)
+					}
+					return true
+				})
+			}
 		}
 	}()
+}
+
+// stopLoginStatesJanitor stops the sweeper. Called by plugin.quiesce so a
+// replaced instance stops touching shared state; idempotent.
+func stopLoginStatesJanitor() {
+	loginStatesJanitorMu.Lock()
+	defer loginStatesJanitorMu.Unlock()
+	if loginStatesJanitorStop == nil {
+		return
+	}
+	close(loginStatesJanitorStop)
+	loginStatesJanitorStop = nil
 }
 
 func main() {}
@@ -287,6 +322,18 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return handleSchedulerPick(request)
 	case pluginabi.MethodUsageHandle:
 		return handleUsage(request)
+	case pluginabi.MethodQuotaIdentifier:
+		return handleQuotaIdentifier()
+	case pluginabi.MethodQuotaDescribe:
+		return handleQuotaDescribe()
+	case pluginabi.MethodQuotaFetch:
+		return handleQuotaFetch(request)
+	case pluginabi.MethodQuotaReset:
+		return handleQuotaReset()
+	case pluginabi.MethodRequestComplete:
+		return handleRequestComplete(request)
+	case pluginabi.MethodPluginQuiesce:
+		return handlePluginQuiesce()
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
 	}
@@ -305,6 +352,7 @@ type envelope struct {
 type envelopeError struct {
 	Code       string `json:"code"`
 	Message    string `json:"message"`
+	Retryable  bool   `json:"retryable,omitempty"`
 	HTTPStatus int    `json:"http_status,omitempty"`
 }
 
@@ -334,9 +382,21 @@ type registrationCapability struct {
 	Scheduler             bool                         `json:"scheduler"`
 	ManagementAPI         bool                         `json:"management_api"`
 	UsagePlugin           bool                         `json:"usage_plugin"`
+	// QuotaProvider exposes the normalized quota surface (quota.identifier /
+	// describe / fetch / reset) alongside the existing /credits management route.
+	QuotaProvider bool `json:"quota_provider"`
+	// RequestLifecyclePlugin enables the request.complete terminal callback used
+	// to account for outcomes the executor cannot observe (client disconnects).
+	RequestLifecyclePlugin bool `json:"request_lifecycle_plugin"`
+	// WebSocketResponseObserver is deliberately ABSENT from this payload (not
+	// merely false): both upstreams are HTTP SSE, so the observer would never
+	// fire, and API_DESIGN §1.8 pins the key as "still absent" (PRD N1).
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
+// The single source of truth is the VERSION file at the repository root;
+// this literal is only a placeholder default and MUST match it
+// (enforced by TestDefaultVersionMatchesVersionFile).
 var version = "0.9.3"
 
 func wbRegistration() registration {
@@ -365,16 +425,18 @@ func wbRegistration() registration {
 			},
 		},
 		Capabilities: registrationCapability{
-			ModelProvider:         true,
-			AuthProvider:          true,
-			FrontendAuthProvider:  false,
-			Executor:              true,
-			ExecutorModelScope:    pluginapi.ExecutorModelScopeOAuth,
-			ExecutorInputFormats:  []string{"chat-completions"},
-			ExecutorOutputFormats: []string{"chat-completions"},
-			ManagementAPI:         true,
-			Scheduler:             true,
-			UsagePlugin:           true,
+			ModelProvider:          true,
+			AuthProvider:           true,
+			FrontendAuthProvider:   false,
+			Executor:               true,
+			ExecutorModelScope:     pluginapi.ExecutorModelScopeOAuth,
+			ExecutorInputFormats:   []string{"chat-completions"},
+			ExecutorOutputFormats:  []string{"chat-completions"},
+			ManagementAPI:          true,
+			Scheduler:              true,
+			UsagePlugin:            true,
+			QuotaProvider:          true,
+			RequestLifecyclePlugin: true,
 		},
 	}
 }
@@ -699,6 +761,9 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
 	}
+	if blocked := guardDraining(); blocked != nil {
+		return blocked, nil
+	}
 	if blocked := guardExecutorReadiness(req.AuthID); blocked != nil {
 		return blocked, nil
 	}
@@ -761,6 +826,9 @@ func handleExecStream(raw []byte) ([]byte, error) {
 	var req executorStreamRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
+	}
+	if blocked := guardDraining(); blocked != nil {
+		return blocked, nil
 	}
 	if blocked := guardExecutorReadiness(req.AuthID); blocked != nil {
 		return blocked, nil
@@ -837,6 +905,20 @@ func errorEnvelope(code, message string) []byte {
 
 func errorEnvelopeWithStatus(code, message string, status int) []byte {
 	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{Code: code, Message: message, HTTPStatus: status}})
+	return raw
+}
+
+// errorEnvelopeWithRetryable marks a transient failure the caller may retry.
+// The host's rpcError drops this flag, so callers that need the downstream body
+// to carry a literal "retryable":true must also make Message valid JSON
+// (see drainErrorBody in quiesce.go).
+func errorEnvelopeWithRetryable(code, message string, status int, retryable bool) []byte {
+	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{
+		Code:       code,
+		Message:    message,
+		Retryable:  retryable,
+		HTTPStatus: status,
+	}})
 	return raw
 }
 

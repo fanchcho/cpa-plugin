@@ -28,10 +28,22 @@ func ensureScheduler() {
 	go schedulerLoop(schedulerStop)
 }
 
-// Note: there is deliberately no stopCheckinScheduler. The plugin shutdown
-// export is a no-op (see cliproxyPluginShutdown) because the host invokes it
-// during its own runtime teardown, where touching Go sync primitives from the
-// plugin's c-shared runtime caused SIGSEGV on every restart.
+// stopCheckinScheduler stops the 09:00/21:00 check-in + 22:00 keepalive
+// scheduler loop. It is the quiesce-time counterpart of ensureScheduler.
+//
+// This is the ONLY sanctioned stop entry point: plugin.quiesce calls it during
+// hot reload, while the plugin is still fully alive. cliproxyPluginShutdown
+// must stay a no-op (see that function's comment — touching Go sync primitives
+// during host runtime teardown caused SIGSEGV). Safe to call repeatedly.
+func stopCheckinScheduler() {
+	schedulerMu.Lock()
+	defer schedulerMu.Unlock()
+	if schedulerStop == nil {
+		return // never started, or already stopped
+	}
+	close(schedulerStop)
+	schedulerStop = nil
+}
 
 func scheduledInCurrentHour(now time.Time, hours []int) bool {
 	for _, h := range hours {

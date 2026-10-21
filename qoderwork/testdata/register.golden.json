@@ -1,0 +1,73 @@
+{
+  "capabilities": {
+    "auth_provider": true,
+    "executor": true,
+    "executor_input_formats": [
+      "chat-completions"
+    ],
+    "executor_model_scope": "oauth",
+    "executor_output_formats": [
+      "chat-completions"
+    ],
+    "frontend_auth_provider": false,
+    "management_api": true,
+    "model_provider": true,
+    "scheduler": true,
+    "usage_plugin": true
+  },
+  "metadata": {
+    "Author": "Sliverkiss (based on qoderwork by lovingfish)",
+    "ConfigFields": [
+      {
+        "Description": "Enable daily auto check-in at 09:00 and 21:00 local time for CN accounts (default true).",
+        "EnumValues": null,
+        "Name": "checkin_auto",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Auto disable CN when credits exhausted; re-enable CN after check-in restores credits (default true).",
+        "EnumValues": null,
+        "Name": "lifecycle_auto",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Enable daily access-token refresh at 22:00 local time to prevent Keycloak offline-session expiry (default true).",
+        "EnumValues": null,
+        "Name": "token_keepalive",
+        "Type": "boolean"
+      },
+      {
+        "Description": "Optional model list. Each item can have id, name, alias, context, max_tokens, enabled, reasoning.",
+        "EnumValues": null,
+        "Name": "models",
+        "Type": "array"
+      },
+      {
+        "Description": "Multi-account selection: off (defer to built-in, default) or credits (pick highest remaining). WARNING: when off + lifecycle_auto=false, exhausted accounts may still be routed — enable lifecycle_auto or set scheduler_mode=credits.",
+        "EnumValues": [
+          "off",
+          "credits"
+        ],
+        "Name": "scheduler_mode",
+        "Type": "enum"
+      },
+      {
+        "Description": "Optional override of CPAMP usage import URL (default http://cpa-manager-plus:18317/v0/management/usage/import; also env USAGE_REPORT_URL).",
+        "EnumValues": null,
+        "Name": "usage_report_url",
+        "Type": "string"
+      },
+      {
+        "Description": "Optional CPAMP admin key override. Prefer auto-detect from env CPAMP_ADMIN_KEY / USAGE_REPORT_KEY or secret file /run/secrets/cpamp_admin_key.",
+        "EnumValues": null,
+        "Name": "usage_report_key",
+        "Type": "string"
+      }
+    ],
+    "GitHubRepository": "https://github.com/Sliverkiss/cpa-plugin",
+    "Logo": "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/QoderWork.png",
+    "Name": "qoderwork",
+    "Version": "0.8.2"
+  },
+  "schema_version": 1
+}

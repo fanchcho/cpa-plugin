@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
@@ -56,7 +57,10 @@ type hostHTTPResponse struct {
 // call; the flat method/url/headers/body fields are an alternate form we don't
 // use (host prefers Request when present).
 type rpcHostHTTPRequestWire struct {
-	Request *rpcHostHTTPInner `json:"request,omitempty"`
+	// HostCallbackID re-enters the callback context the host opened for the RPC
+	// this call belongs to (ADR-001). Empty means "no enclosing callback".
+	HostCallbackID string            `json:"host_callback_id,omitempty"`
+	Request        *rpcHostHTTPInner `json:"request,omitempty"`
 }
 
 type rpcHostHTTPInner struct {
@@ -112,6 +116,15 @@ func hostBridgeAvailable() bool {
 // This keeps the plugin functional in dev/test contexts while preferring the
 // compliant path in production.
 func hostHTTPDo(req *http.Request) (*hostHTTPResponse, error) {
+	return hostHTTPDoWithCallback(req, "")
+}
+
+// hostHTTPDoWithCallback performs the call inside the host callback context that
+// came in on the enclosing RPC envelope (ADR-001). QuotaProvider.FetchQuota must
+// use this: the pluginapi request's HTTPClient field is `json:"-"` and is nil'd
+// by the host adapter, so the callback id is the only transport that carries the
+// auth-bound transport policy. An empty id degrades to the plain path.
+func hostHTTPDoWithCallback(req *http.Request, callbackID string) (*hostHTTPResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("nil request")
 	}
@@ -133,6 +146,7 @@ func hostHTTPDo(req *http.Request) (*hostHTTPResponse, error) {
 		return hostHTTPDoDirect(req, bodyBytes)
 	}
 	wire := rpcHostHTTPRequestWire{
+		HostCallbackID: strings.TrimSpace(callbackID),
 		Request: &rpcHostHTTPInner{
 			Method:  req.Method,
 			URL:     req.URL.String(),

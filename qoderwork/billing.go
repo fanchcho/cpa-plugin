@@ -36,6 +36,10 @@ type checkinStatusResponse struct {
 }
 
 func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
+	return fetchCheckinStatusWithCallback(sa, "")
+}
+
+func fetchCheckinStatusWithCallback(sa *storedAuth, callbackID string) (*checkinSummary, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamBaseCN+"/sash/api/v1/me/daily-check-in/status", nil)
@@ -43,7 +47,7 @@ func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
 		return nil, err
 	}
 	billingHeaders(req, sa)
-	resp, err := hostHTTPDo(req)
+	resp, err := hostHTTPDoWithCallback(req, callbackID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,12 +106,16 @@ type quotaUsageResponse struct {
 // fetchUserResource queries QoderWork's quota endpoint and aggregates base +
 // add-on credits into the panel's creditsSummary shape.
 func fetchUserResource(sa *storedAuth) (*creditsSummary, error) {
+	return fetchUserResourceWithCallback(sa, "")
+}
+
+func fetchUserResourceWithCallback(sa *storedAuth, callbackID string) (*creditsSummary, error) {
 	req, err := http.NewRequest(http.MethodGet, upstreamBaseCN+"/api/v2/quota/usage", nil)
 	if err != nil {
 		return nil, err
 	}
 	billingHeaders(req, sa)
-	resp, err := hostHTTPDo(req)
+	resp, err := hostHTTPDoWithCallback(req, callbackID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +136,15 @@ func fetchUserResource(sa *storedAuth) (*creditsSummary, error) {
 			{Name: "赠送/签到额度", Remain: int64(q.AddOnQuota.Remaining), Used: int64(q.AddOnQuota.Used), Size: int64(q.AddOnQuota.Total)},
 		},
 	}
+	// The quota API reports the cycle end as epoch milliseconds. Stamp it onto the
+	// packages so QuotaProvider.FetchQuota can surface a ResetTime (DESIGN §4.4:
+	// Packages[].CycleEnd → Buckets[].ResetTime); the panel ignores the field.
+	if q.ExpiresAt > 0 {
+		cycleEnd := time.UnixMilli(q.ExpiresAt).UTC().Format(time.RFC3339)
+		for i := range sum.Packages {
+			sum.Packages[i].CycleEnd = cycleEnd
+		}
+	}
 	return sum, nil
 }
 
@@ -144,12 +161,16 @@ type planResponse struct {
 }
 
 func fetchPaymentType(sa *storedAuth) string {
+	return fetchPaymentTypeWithCallback(sa, "")
+}
+
+func fetchPaymentTypeWithCallback(sa *storedAuth, callbackID string) string {
 	req, err := http.NewRequest(http.MethodGet, upstreamBaseCN+"/api/v2/user/plan", nil)
 	if err != nil {
 		return ""
 	}
 	billingHeaders(req, sa)
-	resp, err := hostHTTPDo(req)
+	resp, err := hostHTTPDoWithCallback(req, callbackID)
 	if err != nil || resp.StatusCode >= 400 {
 		return ""
 	}

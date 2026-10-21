@@ -27,13 +27,17 @@ checksums.txt
 命名规则与官方一致：`ArchiveName(id, version, goos, goarch) = {id}_{version}_{goos}_{goarch}.zip`
 （见 CLIProxyAPI `internal/pluginstore`）。
 
-CI：push / PR 全量构建（只出 artifacts）；tag `<id>-v*`（如 `qoderwork-v0.2.6`）或 dispatch 触发**该插件独立版本**的 Release。
+CI：push / PR 全量构建（只出 artifacts）；tag **裸 `v*`**（形如 `vX.Y.Z`）或 dispatch 触发**该插件独立版本**的 Release。
+
+> **发布 tag 约定（P0）**：宿主 `pluginstore.ReleaseVersion()` 只剥离前导 `v`，随后要求匹配
+> `^[0-9][0-9A-Za-z.+-]*$`（`internal/pluginstore/github.go`）。历史格式 `<id>-v*`（如 `workbuddy-v0.8.5`）
+> **校验失败**，会导致商店安装/更新链路断裂。故 tag 统一为裸 `vX.Y.Z`。
 
 ## 安装（linux/amd64 示例）
 
 ```bash
-# 从 Release 下载
-unzip qoderwork_0.2.6_linux_amd64.zip
+# 从 Release 下载；<id>_<version> 中的 version = 各插件 VERSION 文件内容（= tag 去掉前导 v）
+unzip qoderwork_<version>_linux_amd64.zip
 # 扁平 plugins 目录（常见 docker 挂载）
 cp qoderwork.so /path/to/cliproxyapi/plugins/qoderwork.so
 # 或平台子目录布局

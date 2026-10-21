@@ -203,6 +203,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     <input id="accountSearch" class="field-input" type="search" placeholder="搜索昵称、标签、文件名或 UID" oninput="setAccountSearch(this.value)" aria-label="搜索账号">
     <button type="button" class="ftag" id="remainSort" onclick="cycleRemainSort(this)">剩余积分：原始顺序</button>
   </div>
+  <div id="affinityNote" class="sub" role="status" aria-live="polite" hidden></div>
   <div class="summary card" id="summaryBox" style="display:none"></div>
   <div id="grid" class="grid"><div class="loading">加载中…</div></div>
   <footer class="footer">当前出口 IP：<strong id="egressIp" role="status">检测中…</strong></footer>
@@ -416,10 +417,60 @@ function card(a){
   return `<div class="card${selected?" selected":""}" data-region="${region}" data-auth="${esc(a.auth_index)}">
   <h2>${esc(a.nickname||a.label||a.name)} <span style="display:flex;gap:6px;align-items:center">${badges}</span></h2>
   <div class="uid">${esc(a.uid||"")} · ${esc(a.name||"")}</div>
+  ${affinityBadgeFor(a)}
   ${progressHTML(cr)}
   ${a.error?`<div class="row"><span class="k">错误</span><span class="v err">${esc(a.error)}</span></div>`:""}
   <div class="actions">${selectBtn}${refreshBtn}${actionHTML}</div>
   </div>`;
+}
+// Read-only session affinity (host.affinity.lookup, DESIGN §7 / VC-3).
+// Purely diagnostic: "why did this session route to that account?". The plugin
+// NEVER writes affinity state — that belongs to the host's scheduler, and
+// overriding it from a provider plugin would fight it.
+//
+// Degradation rules (VC-3): no session identity in the panel URL → no request
+// at all; unsupported host / failed call → nothing rendered, no error block, no
+// toast, and the main load() path is never blocked (the query runs after the
+// cards are already on screen).
+let affinityState=null;
+function affinityQueryParams(){
+  let q;
+  try{ q=new URLSearchParams(location.search||""); }catch(e){ return null; }
+  const sessionId=(q.get("session_id")||"").trim();
+  const model=(q.get("model")||"").trim();
+  if(!sessionId||!model) return null;
+  return {sessionId, model};
+}
+function loadAffinity(accounts){
+  const params=affinityQueryParams();
+  if(!params) return;                       // no session identity → skip entirely
+  if(!accounts||!accounts.length) return;
+  api(`/affinity?session_id=${encodeURIComponent(params.sessionId)}&model=${encodeURIComponent(params.model)}`)
+    .then(d=>{
+      if(!d||d.supported===false||!d.status){
+        affinityState=null; renderAffinityNote(); renderAccountCards(); return;
+      }
+      affinityState={status:d.status, authIndex:d.auth_index||""};
+      renderAffinityNote();
+      renderAccountCards();
+    })
+    .catch(()=>{ affinityState=null; renderAffinityNote(); });
+}
+function renderAffinityNote(){
+  const el=document.getElementById("affinityNote");
+  if(!el) return;
+  let text="";
+  if(affinityState){
+    if(affinityState.status==="unbound") text="当前会话未绑定账号";
+    else if(affinityState.status==="ambiguous") text="当前会话绑定不唯一";
+  }
+  if(!text){ el.hidden=true; el.textContent=""; return; }
+  el.hidden=false; el.textContent=text;
+}
+function affinityBadgeFor(a){
+  if(!affinityState||affinityState.status!=="bound") return "";
+  if(String(a.auth_index)!==String(affinityState.authIndex)) return "";
+  return `<div class="row affinity"><span class="k">会话绑定</span><span class="v">当前会话粘在此账号</span></div>`;
 }
 let currentFilter="all";
 let accountSearch="";
@@ -757,6 +808,8 @@ async function load(force, btn){
     renderSummary(accounts);
     // Lazy-load credits for cards that don't have them yet.
     lazyLoadCredits(accounts);
+    // Read-only affinity hint; no-op unless the panel URL carries a session id.
+    loadAffinity(accounts);
     if(force){
       const errN=accounts.filter(a=>a.error).length;
       const life=(d.lifecycle||[]).length;
